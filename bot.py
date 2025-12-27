@@ -6,7 +6,7 @@ import aiohttp
 import os
 
 # ضع توكن بوت التليجرام الخاص بك هنا أو استخدم متغيرات البيئة
-TOKEN = '8320774023:AAFiFH3DMFZVI-njS3i-h50q4WmNwGpdpeg'
+TOKEN = '8220448877:AAF8mDyfUgnUWKX5B3VBozRz6Yjac5a34SQ'
 bot = telebot.TeleBot(TOKEN)
 
 user_data = {}
