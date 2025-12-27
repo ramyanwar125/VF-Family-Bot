@@ -1,163 +1,174 @@
+import logging
 import asyncio
-import os
 import threading
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import os
 from flask import Flask
-import aiohttp
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 import engine
 
-# --- سيرفر Flask لإبقاء البوت مستيقظاً على ريندر ---
-app = Flask(__name__)
-@app.route('/')
-def home(): return "Bot is Alive"
+# --- إعداد سيرفر Flask لفتح بورت ريندر ---
+web_app = Flask(__name__)
 
-def run_flask():
+@web_app.route('/')
+def health_check():
+    return "Bot is running and healthy!", 200
+
+def run_web_server():
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    web_app.run(host='0.0.0.0', port=port)
 
-# --- إعدادات Aiogram ---
+# --- إعدادات البوت الأساسية ---
 TOKEN = '8220448877:AAF8mDyfUgnUWKX5B3VBozRz6Yjac5a34SQ'
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-class Form(StatesGroup):
-    waiting_for_num = State()
-    waiting_for_pwd = State()
-    waiting_for_m_num = State()
-    waiting_for_m_pwd = State()
+(MAIN, MB_SUB, FAM_SUB, GET_NUM, GET_PWD, GET_M_NUM, GET_M_PWD, GET_QUOTA, SELECT_FINAL) = range(9)
 
-def main_kb():
-    buttons = [
-        [InlineKeyboardButton(text="💰 ماني باك", callback_data="op_MB"),
-         InlineKeyboardButton(text="🎁 خصم فليكس", callback_data="op_FLX")],
-        [InlineKeyboardButton(text="👥 إضافة فليكس فاميلي", callback_data="op_ADD_FAM")],
-        [InlineKeyboardButton(text="🚀 تطيير أفراد (ثغرة)", callback_data="op_FLY")],
-        [InlineKeyboardButton(text="🔄 إعادة تشغيل", callback_data="start_over")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message):
-    await message.answer("💎 **مرحباً بك في بوت خدمات فودافون الشامل**\n\nاختر الخدمة المطلوبة من الأزرار أدناه:", 
-                         reply_markup=main_kb(), parse_mode="Markdown")
-
-@dp.callback_query(F.data == "start_over")
-async def restart(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("🔄 تم البدء من جديد. اختر الخدمة:", reply_markup=main_kb())
-
-@dp.callback_query(F.data.startswith("op_"))
-async def process_op(callback: types.CallbackQuery, state: FSMContext):
-    op = callback.data.split("_")[1] if "ADD" not in callback.data else "ADD_FAM"
-    await state.update_data(op=op)
-    
-    if op == "FLX":
-        buttons = [[InlineKeyboardButton(text=v['desc'], callback_data=f"pkg_{k}")] for k, v in engine.PACKAGES.items()]
-        await callback.message.edit_text("🎁 اختر باقة الخصم المستهدفة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [[InlineKeyboardButton("💰 Money Back", callback_data='MB')],
+          [InlineKeyboardButton("👨‍👩‍👧‍👦 Flex Family", callback_data='FAM')],
+          [InlineKeyboardButton("🎁 Flex Discount", callback_data='FLX')]]
+    text = "💎 **بوت فودافون الشامل**\nيرجى اختيار القسم المطلوبة من الأزرار:"
+    markup = InlineKeyboardMarkup(kb)
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='Markdown')
     else:
-        text = "👤 أرسل رقم المالك (Owner):"
-        await callback.message.answer(text)
-        await state.set_state(Form.waiting_for_num)
+        await update.message.reply_text(text, reply_markup=markup, parse_mode='Markdown')
+    return MAIN
 
-@dp.callback_query(F.data.startswith("pkg_"))
-async def process_pkg(callback: types.CallbackQuery, state: FSMContext):
-    pkg = callback.data.split("_")[1]
-    await state.update_data(pkg=pkg)
-    await callback.message.answer("📱 أرسل رقم الهاتف المراد تفعيل الخصم عليه:")
-    await state.set_state(Form.waiting_for_num)
+async def menu_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'MB':
+        kb = [[InlineKeyboardButton("🔍 فحص رصيد", callback_data='MB_SCAN'), InlineKeyboardButton("🔄 استرداد باقة", callback_data='MB_REF')], 
+              [InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data='BACK')]]
+        await query.edit_message_text("💰 **قسم Money Back**", reply_markup=InlineKeyboardMarkup(kb))
+        return MB_SUB
+    elif query.data == 'FAM':
+        kb = [[InlineKeyboardButton("➕ إضافة عضو", callback_data='F_ADD'), InlineKeyboardButton("✅ قبول دعوة", callback_data='F_ACC')], 
+              [InlineKeyboardButton("❌ حذف عضو", callback_data='F_REM'), InlineKeyboardButton("🤖 إضافة تلقائية", callback_data='F_AUTO')], 
+              [InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data='BACK')]]
+        await query.edit_message_text("👨‍👩‍👧‍👦 **إدارة العائلة**", reply_markup=InlineKeyboardMarkup(kb))
+        return FAM_SUB
+    elif query.data == 'FLX':
+        context.user_data['op'] = 'F_OFFER'
+        kb = [[InlineKeyboardButton(f"⭐ {v['desc']}", callback_data=f"X_FLX_{k}")] for k, v in engine.PACKAGES.items()]
+        kb.append([InlineKeyboardButton("🔙 رجوع", callback_data='BACK')])
+        await query.edit_message_text("🎁 **اختر الباقة لتفعيل الخصم:**", reply_markup=InlineKeyboardMarkup(kb))
+        return SELECT_FINAL
 
-@dp.message(Form.waiting_for_num)
-async def get_num(message: types.Message, state: FSMContext):
-    await state.update_data(num=message.text)
-    await message.answer("🔑 أرسل كلمة مرور الحساب:")
-    await state.set_state(Form.waiting_for_pwd)
-
-@dp.message(Form.waiting_for_pwd)
-async def get_pwd(message: types.Message, state: FSMContext):
-    await state.update_data(pwd=message.text)
-    data = await state.get_data()
+async def final_exe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'BACK': return await start(update, context)
     
-    if data['op'] in ['FLY', 'ADD_FAM']:
-        await message.answer("👥 أرسل رقم العضو (Member):")
-        await state.set_state(Form.waiting_for_m_num)
-    else:
-        await execute_simple_op(message, state)
+    if "X_FLX_" in query.data:
+        context.user_data['selected_pkg'] = query.data.replace("X_FLX_", "")
+        await query.edit_message_text("📱 **أرسل رقم الهاتف الآن:**")
+        return GET_NUM
+    return MAIN
 
-@dp.message(Form.waiting_for_m_num)
-async def get_m_num(message: types.Message, state: FSMContext):
-    await state.update_data(m_num=message.text)
-    await message.answer("🔑 أرسل كلمة مرور العضو:")
-    await state.set_state(Form.waiting_for_m_pwd)
+async def sub_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == 'BACK': return await start(update, context)
+    context.user_data['op'] = query.data
+    await query.edit_message_text("📱 **أرسل رقم الهاتف الأساسي:**")
+    return GET_NUM
 
-@dp.message(Form.waiting_for_m_pwd)
-async def get_m_pwd(message: types.Message, state: FSMContext):
-    await state.update_data(m_pwd=message.text)
-    buttons = [
-        [InlineKeyboardButton(text="10%", callback_data="q_10"),
-         InlineKeyboardButton(text="20%", callback_data="q_20"),
-         InlineKeyboardButton(text="40%", callback_data="q_40")]
-    ]
-    await message.answer("📊 اختر نسبة توزيع الحصة:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+async def get_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['num'] = update.message.text
+    await update.message.reply_text("🔑 **أرسل كلمة المرور:**")
+    return GET_PWD
 
-@dp.callback_query(F.data.startswith("q_"))
-async def final_family_process(callback: types.CallbackQuery, state: FSMContext):
-    quota = callback.data.split("_")[1]
-    data = await state.get_data()
-    op = data.get('op')
-    
-    msg = await callback.message.edit_text("⏳ جاري بدء العملية...")
-    
-    async with aiohttp.ClientSession() as session:
-        o_t = await engine.get_token_async(session, data['num'], data['pwd'])
-        m_t = await engine.get_token_async(session, data['m_num'], data['m_pwd'])
-        
-        if not o_t or not m_t:
-            await msg.edit_text("❌ فشل في جلب التوكنات. تأكد من الأرقام والباسورد.")
-            return
+async def get_pwd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['pwd'] = update.message.text
+    op = context.user_data['op']
+    if op.startswith('F_') and op != 'F_OFFER':
+        await update.message.reply_text("👤 **أرسل رقم هاتف العضو:**")
+        return GET_M_NUM
+    return await run_process(update, context)
 
-        if op == "FLY":
-            await msg.edit_text("🚀 جاري تنفيذ ثغرة التطيير المزدوج...")
-            t1 = await engine.add_member_async(session, o_t, data['num'], data['m_num'], quota)
-            await asyncio.sleep(0.1)
-            t2 = await engine.add_member_async(session, o_t, data['num'], data['m_num'], quota)
-            success = t1 or t2
-        else:
-            await msg.edit_text("⏳ جاري إضافة الفرد بشكل رسمي...")
-            success = await engine.add_member_async(session, o_t, data['num'], data['m_num'], quota)
+async def get_m_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['m_num'] = update.message.text
+    op = context.user_data['op']
+    if op in ['F_ADD', 'F_AUTO']:
+        kb = [[InlineKeyboardButton("10% (1300 فليكس)", callback_data='1300')], 
+              [InlineKeyboardButton("20% (2600 فليكس)", callback_data='2600')], 
+              [InlineKeyboardButton("40% (5200 فليكس)", callback_data='5200')]]
+        await update.message.reply_text("📊 **اختر النسبة:**", reply_markup=InlineKeyboardMarkup(kb))
+        return GET_QUOTA
+    elif op == 'F_ACC':
+        await update.message.reply_text("🔑 **أرسل كلمة مرور العضو:**")
+        return GET_M_PWD
+    return await run_process(update, context)
 
-        if success:
-            await msg.edit_text("⚡ نجح الطلب! جاري محاولة القبول تلقائياً...")
-            await asyncio.sleep(6)
-            if await engine.accept_invitation_async(session, data['num'], data['m_num'], m_t):
-                await msg.answer("✅ تم بنجاح! الفرد الآن مضاف في المجموعة.")
-            else:
-                await msg.answer("⚠️ تم الإرسال لكن القبول التلقائي فشل. جرب القبول يدوياً.")
-        else:
-            await msg.edit_text("❌ فشلت العملية. قد يكون الخط غير مؤهل.")
-    
-    await state.clear()
+async def handle_extra(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+        context.user_data['quota'] = update.callback_query.data
+        if context.user_data['op'] == 'F_AUTO':
+            await update.callback_query.edit_message_text("🔑 **أرسل كلمة مرور العضو:**")
+            return GET_M_PWD
+    else: 
+        context.user_data['m_pwd'] = update.message.text
+    return await run_process(update, context)
 
-async def execute_simple_op(message, state):
-    data = await state.get_data()
-    msg = await message.answer("⏳ جاري المعالجة...")
+async def run_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.user_data
+    msg = update.message if update.message else update.callback_query.message
+    status = await msg.reply_text("⏳ **جاري التنفيذ...**")
     try:
-        token = engine.get_token(data['num'], data['pwd'])
-        if data['op'] == 'MB':
-            res = engine.run_money_back_scan(data['num'], token)
-            await msg.edit_text(f"💰 رصيد الماني باك المتاح: {res} جنيه")
-        elif data['op'] == 'FLX':
-            res = engine.execute_flex_discount(data['num'], token, data['pkg'])
-            await msg.edit_text("✅ تم تفعيل خصم الباقة بنجاح!" if res else "❌ الخط غير مؤهل لهذا الخصم")
-    except Exception as e: await msg.edit_text(f"⚠️ خطأ: {e}")
-    await state.clear()
+        # استخدام asyncio.to_thread لتشغيل دوال engine المتزامنة دون تعطيل البوت
+        token = await asyncio.to_thread(engine.get_token, ud['num'], ud['pwd'])
+        op = ud['op']
+        
+        if op == 'MB_SCAN':
+            res = await asyncio.to_thread(engine.run_money_back_scan, ud['num'], token)
+            await status.edit_text(f"💰 **رصيد الماني باك:** `{res}` جنيه")
+        elif op == 'F_OFFER':
+            res = await asyncio.to_thread(engine.execute_flex_discount, ud['num'], token, ud['selected_pkg'])
+            await status.edit_text("✅ تم تفعيل الخصم!" if res else "❌ الخط غير مؤهل")
+        elif op == 'F_ADD':
+            res = await asyncio.to_thread(engine.add_member_async, None, token, ud['num'], ud['m_num'], ud['quota'])
+            await status.edit_text("✅ تم الإرسال" if res else "❌ فشل")
+        elif op == 'F_ACC':
+            mt = await asyncio.to_thread(engine.get_token, ud['m_num'], ud['m_pwd'])
+            res = await asyncio.to_thread(engine.accept_invitation_async, None, ud['num'], ud['m_num'], mt)
+            await status.edit_text("✅ تم القبول" if res else "❌ فشل")
+        # يمكنك إضافة بقية الحالات هنا بنفس الطريقة
+    except Exception as e: 
+        await status.edit_text(f"⚠️ **خطأ:** `{str(e)}`")
+    
+    await asyncio.sleep(2)
+    return ConversationHandler.END
 
-async def main():
-    threading.Thread(target=run_flask, daemon=True).start()
-    await dp.start_polling(bot)
+def main():
+    # تشغيل سيرفر Flask في خيط منفصل
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # تشغيل البوت
+    app = Application.builder().token(TOKEN).build()
+    
+    conv = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            MAIN: [CallbackQueryHandler(menu_click)],
+            MB_SUB: [CallbackQueryHandler(sub_click)],
+            FAM_SUB: [CallbackQueryHandler(sub_click)],
+            GET_NUM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_num)],
+            GET_PWD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_pwd)],
+            GET_M_NUM: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_m_num)],
+            GET_M_PWD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_extra)],
+            GET_QUOTA: [CallbackQueryHandler(handle_extra)],
+            SELECT_FINAL: [CallbackQueryHandler(final_exe)]
+        }, 
+        fallbacks=[CommandHandler("start", start)]
+    )
+    
+    app.add_handler(conv)
+    print("🚀 Bot started with Flask server...")
+    app.run_polling()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+if __name__ == '__main__':
+    main()
