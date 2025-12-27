@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 requests
 aiohttp
+flask
+gunicorn
