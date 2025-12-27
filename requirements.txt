@@ -2,3 +2,4 @@ aiogram
 requests
 aiohttp
 flask
+gunicorn
