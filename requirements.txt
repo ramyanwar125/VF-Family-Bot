@@ -1,5 +1,4 @@
-aiogram
+python-telegram-bot
 requests
 aiohttp
 flask
-gunicorn
