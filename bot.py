@@ -27,16 +27,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("👥 Flex Family", callback_data='FAM')],
         [InlineKeyboardButton("🎁 Flex Discount", callback_data='FLX')]
     ]
-    text = "✨ **مرحباً بك في بوت خدمات فودافون الذكي** ✨\nيرجى اختيار القسم المطلوبه أدناه:"
+    text = "✨ **مرحباً بك في بوت خدمات فودافون الذكي** ✨\nيرجى اختيار القسم المطلوب أدناه:"
     markup = InlineKeyboardMarkup(kb)
     
-    try:
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(text, reply_markup=markup, parse_mode='Markdown')
-    except Exception:
-        pass
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode='Markdown')
     return MAIN
 
 async def menu_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,14 +44,14 @@ async def menu_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("🔍 فحص الرصيد", callback_data='MB_SCAN'), 
                InlineKeyboardButton("🔄 طلب استرداد", callback_data='MB_REF')], 
               [InlineKeyboardButton("🔙 رجوع", callback_data='BACK')]]
-        await query.edit_message_text("💰 **قسم Money Back**\nاختر العملية:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text("💰 **قسم Money Back**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return MB_SUB
         
     elif query.data == 'FAM':
         kb = [[InlineKeyboardButton("➕ إضافة", callback_data='F_ADD'), InlineKeyboardButton("✅ قبول", callback_data='F_ACC')], 
               [InlineKeyboardButton("❌ حذف", callback_data='F_REM'), InlineKeyboardButton("🤖 تلقائي", callback_data='F_AUTO')], 
               [InlineKeyboardButton("🔙 رجوع", callback_data='BACK')]]
-        await query.edit_message_text("👥 **قسم Flex Family**\nإدارة أفراد العائلة:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        await query.edit_message_text("👥 **قسم Flex Family**", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return FAM_SUB
         
     elif query.data == 'FLX':
@@ -121,26 +118,26 @@ async def run_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if op == 'MB_SCAN':
             res = await asyncio.to_thread(engine.run_money_back, ud['num'], token, 'SCAN')
-            await status.edit_text(f"💰 رصيد الاسترداد المتاح: `{res}` ج.م", parse_mode='Markdown')
+            await status.edit_text(f"💰 رصيد الاسترداد: `{res}` ج.م", parse_mode='Markdown')
         elif op == 'F_OFFER':
             res = await asyncio.to_thread(engine.execute_order, ud['num'], token, ud['selected_pkg'], 'FLEX')
             await status.edit_text("✅ تم تفعيل العرض بنجاح!" if res else "❌ فشل التفعيل.")
         elif op == 'F_ADD':
             res = await asyncio.to_thread(engine.family_op, ud['num'], token, ud['m_num'], 'SEND', ud['quota'])
-            await status.edit_text("✅ تم إرسال الدعوة بنجاح." if res else "❌ فشل إرسال الدعوة.")
+            await status.edit_text("✅ تم إرسال الدعوة بنجاح." if res else "❌ فشل الإرسال.")
         elif op == 'F_ACC':
             mt = await asyncio.to_thread(engine.get_token, ud['m_num'], ud['m_pwd'])
             res = await asyncio.to_thread(engine.family_op, ud['num'], None, ud['m_num'], 'ACCEPT', m_token=mt)
-            await status.edit_text("✅ تمت الموافقة على الدعوة." if res else "❌ فشل القبول.")
+            await status.edit_text("✅ تمت الموافقة." if res else "❌ فشل القبول.")
         elif op == 'F_AUTO':
             if await asyncio.to_thread(engine.family_op, ud['num'], token, ud['m_num'], 'SEND', ud['quota']):
                 await asyncio.sleep(1)
                 mt = await asyncio.to_thread(engine.get_token, ud['m_num'], ud['m_pwd'])
                 res = await asyncio.to_thread(engine.family_op, ud['num'], None, ud['m_num'], 'ACCEPT', m_token=mt)
-                await status.edit_text("🚀 تم التفعيل التلقائي (إرسال وقبول) بنجاح!" if res else "⚠️ تم الإرسال وفشل القبول.")
+                await status.edit_text("🚀 تم التفعيل التلقائي بنجاح!" if res else "⚠️ فشل القبول.")
         elif op == 'F_REM':
             res = await asyncio.to_thread(engine.family_op, ud['num'], token, ud['m_num'], 'REMOVE')
-            await status.edit_text("✅ تم حذف العضو من المجموعة." if res else "❌ فشل الحذف.")
+            await status.edit_text("✅ تم حذف العضو." if res else "❌ فشل الحذف.")
             
     except Exception as e:
         await status.edit_text(f"❌ خطأ: `{str(e)}`", parse_mode='Markdown')
@@ -155,12 +152,12 @@ async def final_exe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if "X_FLX_" in query.data:
         context.user_data['selected_pkg'] = query.data.replace("X_FLX_", "")
-        await query.edit_message_text("📱 يرجى إرسال **رقم الهاتف الأساسي**:")
+        await query.edit_message_text("📱 أرسل الآن **رقم الهاتف الأساسي**:")
         return GET_NUM
     elif "X_REF_" in query.data:
         tid, tk, n = query.data.replace("X_REF_", ""), context.user_data['tk'], context.user_data['num']
         res = await asyncio.to_thread(engine.execute_order, n, tk, tid, "REFUND")
-        await query.edit_message_text("✅ تم الاسترداد بنجاح." if res else "❌ فشل الاسترداد.")
+        await query.edit_message_text("✅ تم الاسترداد." if res else "❌ فشل الاسترداد.")
         return await start(update, context)
 
 def main():
@@ -184,7 +181,6 @@ def main():
     )
     
     app.add_handler(conv)
-    print("🚀 البوت يعمل الآن...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
